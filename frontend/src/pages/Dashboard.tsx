@@ -1,37 +1,32 @@
 import { useState } from "react";
-import Stepper from "@/components/Stepper";
-import StepContainer from "@/components/StepContainer";
-import VoiceVisualizer from "@/components/VoiceVisualizer";
-import ChatTranscript, { Message } from "@/components/ChatTranscript";
-import HumanAssistanceCTA from "@/components/HumanAssistanceCTA";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Check } from "lucide-react";
+import { Check, AlertCircle } from "lucide-react";
+import { useVoiceSession } from "@/hooks/useVoiceSession";
+import Stepper from "@/components/Stepper";
+import StepContainer from "@/components/StepContainer";
+import VoiceVisualizer from "@/components/VoiceVisualizer";
+import ChatTranscript from "@/components/ChatTranscript";
+import HumanAssistanceCTA from "@/components/HumanAssistanceCTA";
 
 type VisualizerState = "idle" | "listening" | "processing" | "speaking";
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [currentStep, setCurrentStep] = useState(1);
-  const [visualizerState, setVisualizerState] = useState<VisualizerState>("idle");
-  const [showEMIModal, setShowEMIModal] = useState(false);
-  
-  const [steps, setSteps] = useState([
-    { id: 1, title: "Greeting", completed: false },
-    { id: 2, title: "Payment", completed: false },
-    { id: 3, title: "EMI Options", completed: false },
-    { id: 4, title: "Documents", completed: false },
-  ]);
+  const {
+    isConnected,
+    connectionState,
+    error,
+    currentStep,
+    visualizerState,
+    messages,
+    startSession,
+    endSession,
+    sendData,
+  } = useVoiceSession();
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      role: "agent",
-      content: "Hello! Welcome to our onboarding process. I'm here to help you get started.",
-      timestamp: new Date(),
-    },
-  ]);
+  const [showEMIModal, setShowEMIModal] = useState(false);
 
   const documents = [
     "Valid Government ID (Aadhaar/PAN)",
@@ -40,41 +35,16 @@ const Dashboard = () => {
     "Income Proof (Salary Slip/Bank Statement)",
   ];
 
-  const completeStep = (stepId: number) => {
-    setSteps(prev =>
-      prev.map(step =>
-        step.id === stepId ? { ...step, completed: true } : step
-      )
-    );
-  };
-
-  const handleStepClick = (stepId: number) => {
-    if (steps.find(s => s.id === stepId)?.completed) {
-      setCurrentStep(stepId);
-    }
-  };
-
   const handleNext = () => {
-    if (currentStep < 4) {
-      completeStep(currentStep);
-      setCurrentStep(currentStep + 1);
-    }
+    sendData({ action: "advance_stage", current_stage: currentStep });
   };
 
   const handlePaymentOption = (option: string) => {
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: `I'd like to proceed with ${option}`,
-      timestamp: new Date(),
-    };
-    setMessages(prev => [...prev, newMessage]);
+    sendData({ action: "payment_selected", choice: option });
 
     if (option === "Credit Card" || option === "Full Payment") {
       navigate("/contact-agent");
     } else if (option === "0% Loan EMI") {
-      completeStep(2);
-      setCurrentStep(3);
       setShowEMIModal(true);
     }
   };
@@ -83,18 +53,71 @@ const Dashboard = () => {
     setShowEMIModal(false);
   };
 
+  const handleStartSession = () => {
+    startSession();
+  };
+
+  const handleEndSession = () => {
+    endSession();
+  };
+
   return (
     <div className="min-h-screen bg-background p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
+        {/* Connection Status */}
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-3 h-3 rounded-full ${
+                connectionState === 'connected'
+                  ? 'bg-green-500'
+                  : connectionState === 'connecting'
+                  ? 'bg-yellow-500 animate-pulse'
+                  : connectionState === 'error'
+                  ? 'bg-red-500'
+                  : 'bg-gray-400'
+              }`}
+            />
+            <span className="text-sm text-muted-foreground">
+              {connectionState === 'connected'
+                ? 'Connected to voice agent'
+                : connectionState === 'connecting'
+                ? 'Connecting...'
+                : connectionState === 'error'
+                ? 'Connection error'
+                : 'Disconnected'}
+            </span>
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 text-red-500 text-sm">
+              <AlertCircle className="w-4 h-4" />
+              <span>{error}</span>
+            </div>
+          )}
+        </div>
+
         <header className="mb-8">
           <h1 className="text-3xl font-bold text-foreground">Voice Agent Onboarding</h1>
-          <p className="text-muted-foreground mt-2">Complete the steps below to get started</p>
+          <p className="text-muted-foreground mt-2">
+            Complete the steps below to get started
+          </p>
         </header>
 
         <Stepper
-          steps={steps}
+          steps={[
+            { id: 1, title: "Greeting", completed: currentStep > 1 },
+            { id: 2, title: "Payment", completed: currentStep > 2 },
+            { id: 3, title: "EMI Options", completed: currentStep > 3 },
+            { id: 4, title: "Documents", completed: currentStep > 4 },
+          ]}
           currentStep={currentStep}
-          onStepClick={handleStepClick}
+          onStepClick={(stepId) => {
+            // Allow clicking on completed steps or current step only
+            if (stepId <= currentStep) {
+              sendData({ action: "set_stage", stage: stepId });
+            }
+          }}
         />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -103,17 +126,11 @@ const Dashboard = () => {
               {/* Step 1: Greeting */}
               {currentStep === 1 && (
                 <div className="text-center">
-                  <VoiceVisualizer 
+                  <VoiceVisualizer
                     state={visualizerState}
-                    onSessionStart={() => {
-                      console.log("Voice session started");
-                      // Simulate state changes for demo
-                      setTimeout(() => setVisualizerState("listening"), 1000);
-                    }}
-                    onSessionEnd={() => {
-                      console.log("Voice session ended");
-                      setVisualizerState("idle");
-                    }}
+                    isConnected={isConnected}
+                    onSessionStart={handleStartSession}
+                    onSessionEnd={handleEndSession}
                     onMuteToggle={(muted) => {
                       console.log("Mute toggled:", muted);
                     }}
@@ -123,41 +140,41 @@ const Dashboard = () => {
                   </h2>
                   <p className="text-muted-foreground mb-6 max-w-md mx-auto">
                     Our voice agent will guide you through a simple process to get you started.
-                    Start the voice session to interact with the agent.
+                    {isConnected
+                      ? "The session is active and ready for interaction."
+                      : "Click the button below to start the voice session."
+                    }
                   </p>
-                  <div className="flex gap-4 justify-center">
-                    <Button 
-                      onClick={() => setVisualizerState("listening")} 
-                      variant="outline"
-                      size="sm"
-                    >
-                      Demo Listening
+
+                  {!isConnected && connectionState === 'disconnected' && (
+                    <Button onClick={handleStartSession} size="lg">
+                      Start Voice Session
                     </Button>
-                    <Button 
-                      onClick={() => setVisualizerState("processing")} 
-                      variant="outline"
-                      size="sm"
-                    >
-                      Demo Thinking
+                  )}
+
+                  {connectionState === 'error' && (
+                    <Button onClick={handleStartSession} variant="outline" size="lg">
+                      Retry Connection
                     </Button>
-                    <Button 
-                      onClick={() => setVisualizerState("speaking")} 
-                      variant="outline"
-                      size="sm"
-                    >
-                      Demo Speaking
+                  )}
+
+                  {isConnected && (
+                    <Button onClick={handleNext} size="lg" className="mt-6">
+                      Next
                     </Button>
-                  </div>
-                  <Button onClick={handleNext} size="lg" className="mt-6">
-                    Next
-                  </Button>
+                  )}
                 </div>
               )}
 
               {/* Step 2: Payment Options */}
               {currentStep === 2 && (
                 <div className="text-center">
-                  <VoiceVisualizer state={visualizerState} />
+                  <VoiceVisualizer
+                    state={visualizerState}
+                    isConnected={isConnected}
+                    onSessionStart={handleStartSession}
+                    onSessionEnd={handleEndSession}
+                  />
                   <h2 className="text-2xl font-semibold text-foreground mb-4">
                     Choose Your Payment Method
                   </h2>
@@ -198,7 +215,12 @@ const Dashboard = () => {
               {/* Step 3: EMI Options */}
               {currentStep === 3 && (
                 <div className="text-center">
-                  <VoiceVisualizer state={visualizerState} />
+                  <VoiceVisualizer
+                    state={visualizerState}
+                    isConnected={isConnected}
+                    onSessionStart={handleStartSession}
+                    onSessionEnd={handleEndSession}
+                  />
                   <h2 className="text-2xl font-semibold text-foreground mb-4">
                     0% EMI Loan Selected
                   </h2>
@@ -215,7 +237,12 @@ const Dashboard = () => {
               {/* Step 4: Documents */}
               {currentStep === 4 && (
                 <div className="text-center">
-                  <VoiceVisualizer state={visualizerState} />
+                  <VoiceVisualizer
+                    state={visualizerState}
+                    isConnected={isConnected}
+                    onSessionStart={handleStartSession}
+                    onSessionEnd={handleEndSession}
+                  />
                   <h2 className="text-2xl font-semibold text-foreground mb-4">
                     Required Documents
                   </h2>

@@ -13,12 +13,13 @@ type SessionState = "idle" | "active" | "muted" | "denied" | "ended";
 
 interface VoiceVisualizerProps {
   state: VisualizerState;
+  isConnected?: boolean;
   onSessionStart?: () => void;
   onSessionEnd?: () => void;
   onMuteToggle?: (muted: boolean) => void;
 }
 
-const VoiceVisualizer = ({ state, onSessionStart, onSessionEnd, onMuteToggle }: VoiceVisualizerProps) => {
+const VoiceVisualizer = ({ state, isConnected = false, onSessionStart, onSessionEnd, onMuteToggle }: VoiceVisualizerProps) => {
   const [waveHeights, setWaveHeights] = useState<number[]>([1, 1.2, 0.8, 1.5, 1, 1.3, 0.9]);
   const [sessionState, setSessionState] = useState<SessionState>("idle");
   const [isMuted, setIsMuted] = useState(false);
